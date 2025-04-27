@@ -1,0 +1,1141 @@
+# SENTINEL SEAGRASS PROTECTOR PROJECT
+# Complete Code Collection
+# -----------------------------------------------
+
+"""
+This file contains all the code from the Sentinel Seagrass Protector project
+for easy downloading. Each section is clearly marked with comments.
+"""
+
+# ==============================================
+# APP.PY - MAIN APPLICATION FILE
+# ==============================================
+
+"""
+import streamlit as st
+import folium
+from streamlit_folium import st_folium
+import datetime
+import pandas as pd
+import time
+import math
+import streamlit.components.v1 as components
+
+# Import custom modules
+from gps_simulator import get_current_location, update_location
+from geofencing import is_in_protected_zone, get_nearest_zone_info, get_protection_zones
+from simulated_notifications import send_notification, get_notifications, clear_notifications
+from seagrass_game import render_seagrass_game
+from utils import validate_phone_number, get_svg_content
+
+# Set page configuration
+st.set_page_config(
+    page_title="Sentinel Seagrass Protector",
+    page_icon="🌿",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Initialize session state for storing app data
+if 'location' not in st.session_state:
+    st.session_state['location'] = get_current_location()  # Default location (Brixham, UK)
+if 'in_protected_zone' not in st.session_state:
+    st.session_state['in_protected_zone'] = False
+if 'last_notification_time' not in st.session_state:
+    st.session_state['last_notification_time'] = None
+if 'engine_status' not in st.session_state:
+    st.session_state['engine_status'] = "Running"
+if 'speed' not in st.session_state:
+    st.session_state['speed'] = 6.0  # Default speed in knots
+if 'phone_number' not in st.session_state:
+    st.session_state['phone_number'] = ""
+if 'notifications' not in st.session_state:
+    st.session_state['notifications'] = []
+if 'game_score' not in st.session_state:
+    st.session_state['game_score'] = 0
+
+# Function to check if we need to send a notification
+def check_and_notify():
+    current_location = st.session_state['location']
+    in_zone = is_in_protected_zone(current_location)
+    
+    # If we've entered a protected zone
+    if in_zone and not st.session_state['in_protected_zone']:
+        zone_info = get_nearest_zone_info(current_location)
+        is_restricted = zone_info.get('restricted', False)
+        
+        # Create appropriate alert message
+        if is_restricted:
+            message = f"🚨 URGENT ALERT: You have entered a RESTRICTED seagrass zone: {zone_info['name']}. Engine shutdown required. This area is completely restricted to boat traffic."
+        else:
+            message = f"⚠️ SPEED ALERT: You have entered a protected seagrass zone: {zone_info['name']}. REDUCE SPEED TO BELOW 5 KNOTS to prevent damage to seagrass."
+        
+        # Add additional guidance
+        message += "\n\nSeagrass meadows are critical habitats - please navigate with extreme caution."
+            
+        # Send notification
+        if st.session_state['phone_number']:
+            # Create additional notification for display if new zone is entered
+            send_notification(st.session_state['phone_number'], message)
+            st.session_state['last_notification_time'] = time.time()
+            print(f"Protected zone notification sent! Zone: {zone_info['name']}")
+            
+            # Automatic speed reduction notification
+            if st.session_state['speed'] > 5.0:
+                speed_message = f"🔄 SPEED CONTROL: Boat speed automatically reduced from {st.session_state['speed']:.1f} to 5.0 knots to comply with protected zone regulations."
+                send_notification(st.session_state['phone_number'], speed_message)
+        else:
+            # Debug info if no phone number
+            print("No phone number provided - can't send protection zone notification")
+        
+        # Auto-reduce speed if in protected zone
+        if st.session_state['speed'] > 5.0:
+            st.session_state['speed'] = 5.0
+            
+        # Update engine status
+        if is_restricted:
+            st.session_state['engine_status'] = "Shutting Down - Restricted Area!"
+        else:
+            st.session_state['engine_status'] = "Speed Limited - Protected Area"
+    
+    # If we've left a protected zone        
+    elif not in_zone and st.session_state['in_protected_zone']:
+        # We're leaving a zone - send exit notification
+        if st.session_state['phone_number']:
+            exit_message = "✅ NOTICE: You have exited the protected seagrass zone. Normal navigation rules apply. Thank you for protecting our marine ecosystems."
+            send_notification(st.session_state['phone_number'], exit_message)
+            print("Sent zone exit notification")
+            
+        # Reset engine status
+        st.session_state['engine_status'] = "Running"
+    
+    # Update the zone status
+    st.session_state['in_protected_zone'] = in_zone
+
+# App container
+def main():
+    # Main app title with colored header instead of SVG
+    st.markdown("""
+    <h1 style="text-align: center; color: #2E8B57; background-color: #F0FFF0; padding: 20px; border-radius: 5px;">
+        🌿 Sentinel Seagrass Protector 🌿
+    </h1>
+    <h3 style="text-align: center; color: #006400;">Protecting our valuable marine ecosystems</h3>
+    """, unsafe_allow_html=True)
+    
+    # Add a divider after the title
+    st.divider()
+    
+    # Sidebar for navigation
+    with st.sidebar:
+        st.title("Navigation")
+        
+        # Use a more straightforward tabs approach with st.selectbox
+        tab_options = ["📍 Live Navigation", "🌿 Seagrass Info", "⚠️ Report Violations", "🎮 Seagrass Game"]
+        
+        # Get the selected tab, with default value
+        if 'active_tab' not in st.session_state:
+            st.session_state['active_tab'] = tab_options[0]
+        
+        # Create a clean tabs-like interface with buttons
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📍 Navigation", use_container_width=True):
+                st.session_state['active_tab'] = tab_options[0]
+                st.rerun()
+            
+            if st.button("⚠️ Report", use_container_width=True):
+                st.session_state['active_tab'] = tab_options[2]
+                st.rerun()
+        
+        with col2:
+            if st.button("🌿 Info", use_container_width=True):
+                st.session_state['active_tab'] = tab_options[1]
+                st.rerun()
+            
+            if st.button("🎮 Game", use_container_width=True):
+                st.session_state['active_tab'] = tab_options[3]
+                st.rerun()
+                
+        # Show which tab is currently active
+        st.info(f"Current view: {st.session_state['active_tab']}")
+                
+        # Use the active tab from session state
+        tab = st.session_state['active_tab']
+        
+        st.divider()
+        
+        # Phone number input for notifications
+        st.subheader("Notification Settings")
+        phone_input = st.text_input("Your Phone Number (E.164 format, e.g., +447XXXXXXXXX):", 
+                                    value=st.session_state['phone_number'])
+        
+        # Test notification button (for easier testing)
+        if st.button("Send Test Notification"):
+            if st.session_state['phone_number']:
+                send_notification(st.session_state['phone_number'], "🔔 Test notification from Sentinel Seagrass Protector. Your notifications are working!")
+                st.session_state['last_notification_time'] = time.time()
+                st.rerun()
+        
+        if phone_input:
+            valid, formatted_number = validate_phone_number(phone_input)
+            if valid:
+                st.session_state['phone_number'] = formatted_number
+                st.success(f"Phone number validated: {formatted_number}")
+            else:
+                st.error("Invalid phone number format. Please use E.164 format (e.g., +447XXXXXXXXX)")
+        
+        # Display notifications
+        st.divider()
+        st.subheader("Messages")
+        
+        # Clear notifications button
+        if st.button("Clear All Notifications"):
+            clear_notifications()
+            st.success("All notifications cleared!")
+            st.rerun()
+            
+        # Get and display the notifications
+        notifications = get_notifications()
+        if notifications:
+            for idx, notification in enumerate(notifications):
+                with st.container():
+                    st.markdown(f"**{notification['time']} - To: {notification['phone']}**")
+                    st.info(notification['message'])
+                    st.divider()
+        else:
+            st.info("No notifications yet. Enter your phone number above and click 'Send Test Notification'")
+            
+    # Main content based on selected tab
+    if tab == "📍 Live Navigation":
+        render_navigation_tab()
+    elif tab == "🌿 Seagrass Info":
+        render_seagrass_info_tab()
+    elif tab == "⚠️ Report Violations":
+        render_report_violations_tab()
+    elif tab == "🎮 Seagrass Game":
+        render_seagrass_game()
+    
+    # Display a simple footer instead of SVG
+    st.markdown("""
+    <div style="text-align: center; padding: 15px; background-color: #F0FFF0; margin-top: 20px; border-radius: 5px;">
+        <p style="color: #2E8B57; font-weight: bold;">
+            🌊 Sentinel Seagrass Protector &copy; 2025 🌊<br>
+            Protecting our oceans, one seagrass meadow at a time
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Check for protected zone notifications
+    check_and_notify()
+
+def render_navigation_tab():
+    st.header("Live Navigation Map")
+    
+    # Display a prominent notification banner if in protected zone
+    if st.session_state['in_protected_zone']:
+        zone_info = get_nearest_zone_info(st.session_state['location'])
+        is_restricted = zone_info.get('restricted', False)
+        
+        # Full-width alert banner
+        if is_restricted:
+            st.markdown("""
+            <div style="background-color: #FF0000; padding: 10px; border-radius: 5px; margin-bottom: 20px; text-align: center;">
+                <h2 style="color: white; margin: 0;">🚨 RESTRICTED AREA - ENGINE SHUTDOWN REQUIRED 🚨</h2>
+                <p style="color: white; font-size: 16px;">SMS Alert has been sent to your phone</p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div style="background-color: #FFA500; padding: 10px; border-radius: 5px; margin-bottom: 20px; text-align: center;">
+                <h2 style="color: white; margin: 0;">⚠️ PROTECTED ZONE - 5 KNOT SPEED LIMIT ⚠️</h2>
+                <p style="color: white; font-size: 16px;">SMS Alert has been sent to your phone</p>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    # Create map at top of page
+    current_lat, current_lon = st.session_state['location']
+    m = folium.Map(location=[current_lat, current_lon], zoom_start=14)
+    
+    # Add boat marker
+    folium.Marker(
+        [current_lat, current_lon],
+        popup="Your Boat",
+        icon=folium.Icon(color="blue", icon="ship", prefix="fa"),
+    ).add_to(m)
+    
+    # Add protected zones
+    for zone in get_protection_zones():
+        color = "red" if zone.get("restricted", False) else "green"
+        folium.Circle(
+            location=(zone["lat"], zone["lon"]),
+            radius=zone["radius"],
+            color=color,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.2,
+            popup=f"{zone['name']} - {'Restricted' if zone.get('restricted', False) else '5 Knot Limit'}"
+        ).add_to(m)
+    
+    # Display the map 
+    map_data = st_folium(m, width=800, height=500)
+    
+    # Boat status information in columns
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Boat status indicators
+        st.subheader("Boat Status")
+        st.metric("Current Speed", f"{st.session_state['speed']:.1f} knots")
+        
+        engine_status = st.session_state['engine_status']
+        status_color = "green"
+        if "Shutting Down" in engine_status:
+            status_color = "red"
+        elif "Speed Limited" in engine_status:
+            status_color = "orange"
+            
+        st.markdown(f"<h3 style='color: {status_color};'>Engine: {engine_status}</h3>", unsafe_allow_html=True)
+    
+    with col2:
+        # Zone information
+        st.subheader("Zone Information")
+        
+        # Protection zone status with more prominent alerts
+        if st.session_state['in_protected_zone']:
+            zone_info = get_nearest_zone_info(st.session_state['location'])
+            is_restricted = zone_info.get('restricted', False)
+            
+            # Display a more prominent warning based on zone type
+            if is_restricted:
+                st.error(f"""
+                🚨 **RESTRICTED AREA ALERT** 🚨
+                
+                You are in a **RESTRICTED seagrass zone**: {zone_info['name']}
+                
+                **ENGINE MUST BE SHUT DOWN IMMEDIATELY**
+                
+                This area is completely closed to boat traffic to protect critical seagrass habitat.
+                """)
+            else:
+                st.warning(f"""
+                ⚠️ **PROTECTED ZONE - SPEED LIMIT ENFORCED** ⚠️
+                
+                You are in a **protected seagrass zone**: {zone_info['name']}
+                
+                **MAXIMUM SPEED: 5 KNOTS**
+                
+                Slow navigation required to prevent damage to seagrass.
+                """)
+                
+            # Add guidance for navigation
+            st.info("Follow marked channels. Avoid anchoring. Report any violations.")
+        else:
+            st.success("You are in an unrestricted area. Safe navigation!")
+            
+        # Distance to nearest zone
+        nearest_zone = get_nearest_zone_info(st.session_state['location'])
+        st.info(f"Distance to nearest protected zone ({nearest_zone['name']}): {nearest_zone['distance']:.2f} km")
+        
+    # Add auto-navigation simulation using fixed paths
+    st.divider()
+    st.subheader("Auto Navigation Demo")
+    
+    # Create two columns for better organized simulation buttons
+    sim_col1, sim_col2 = st.columns(2)
+    
+    with sim_col1:
+        if st.button("Enter 5-Knot Zone", use_container_width=True):
+            # Move the boat directly into a 5-knot protected zone (not restricted)
+            elberry_cove = (50.4015, -3.5260)  # Elberry Cove coordinates (5-knot zone)
+            st.session_state['location'] = elberry_cove
+            st.session_state['speed'] = 6.0  # Slightly above limit to trigger speed reduction
+            st.rerun()
+    
+    with sim_col2:
+        if st.button("Enter Restricted Zone", use_container_width=True):
+            # Move the boat into a fully restricted zone 
+            fishcombe_cove = (50.4025, -3.5137)  # Fishcombe Cove coordinates (restricted)
+            st.session_state['location'] = fishcombe_cove
+            st.session_state['speed'] = 7.0  # Above limit for more dramatic effect
+            st.rerun()
+        
+    if st.button("Return to Open Water", use_container_width=True):
+        # Move the boat back to open water
+        open_water = (50.3947, -3.5123)  # Brixham center
+        st.session_state['location'] = open_water
+        st.session_state['speed'] = 6.0
+        st.rerun()
+
+def render_seagrass_info_tab():
+    st.header("The Importance of Seagrass")
+    
+    st.markdown("""
+    ## What is Seagrass?
+    
+    Seagrass is a flowering plant that grows in shallow coastal waters. It forms vast underwater meadows that are crucial for marine biodiversity and ecosystem health.
+    
+    ## Why is Seagrass Important?
+    
+    - **Carbon Capture**: Seagrass meadows are one of the most effective carbon sinks on the planet, capturing carbon 35 times faster than tropical rainforests.
+    
+    - **Biodiversity**: Seagrass provides habitat for thousands of species, including endangered animals like seahorses and sea turtles.
+    
+    - **Coastal Protection**: Seagrass beds reduce coastal erosion and protect shorelines from storm damage.
+    
+    - **Water Quality**: Seagrass filters water, removing pollutants and enhancing water clarity.
+    
+    - **Economic Value**: Healthy seagrass supports commercial and recreational fishing, providing billions of dollars in ecosystem services.
+    
+    ## Threats to Seagrass
+    
+    - **Boat Propellers**: Boat propellers can tear through seagrass beds, creating scars that take years to heal.
+    
+    - **Anchoring**: Anchors dragged through seagrass can uproot plants and create large bare patches.
+    
+    - **Pollution**: Agricultural runoff, sewage, and industrial waste degrade water quality and harm seagrass.
+    
+    - **Climate Change**: Rising sea temperatures and ocean acidification threaten seagrass survival.
+    
+    ## How You Can Help
+    
+    - **Follow Speed Limits**: Slow down in marked seagrass areas to prevent propeller damage.
+    
+    - **Stay in Navigation Channels**: Keep your boat within marked channels in shallow areas.
+    
+    - **Use Mooring Buoys**: Use mooring buoys instead of anchoring in seagrass areas.
+    
+    - **Report Damage**: Report any observed damage or violations to local authorities.
+    
+    - **Spread Awareness**: Share knowledge about seagrass importance with fellow boaters.
+    """)
+    
+    st.divider()
+    
+    st.subheader("Seagrass Areas in Brixham/Torbay")
+    st.markdown("""
+    Torbay is home to important seagrass meadows, particularly in:
+    
+    1. **Fishcombe Cove**
+    2. **Elberry Cove**
+    3. **Torre Abbey Sands**
+    4. **Goodrington Sands**
+    
+    These areas are marked with 5-knot speed limit buoys and are monitored to protect the valuable seagrass ecosystems. Always follow local navigation guidelines when boating in these areas.
+    """)
+
+def render_report_violations_tab():
+    st.header("Report Seagrass Protection Violations")
+    
+    st.markdown("""
+    Use this form to report any observed violations of seagrass protection regulations. Your reports help us maintain these vital ecosystems.
+    
+    Common violations include:
+    - Speeding in protected zones
+    - Anchor damage to seagrass beds
+    - Pollution or dumping in protected areas
+    """)
+    
+    # Report form
+    with st.form("violation_report_form"):
+        date_observed = st.date_input("Date Observed", value=datetime.date.today())
+        time_observed = st.time_input("Time Observed", value=datetime.datetime.now().time())
+        
+        location_options = [
+            "Fishcombe Cove",
+            "Elberry Cove", 
+            "Torre Abbey Sands",
+            "Goodrington Sands",
+            "Other (specify in details)"
+        ]
+        location = st.selectbox("Location", location_options)
+        
+        violation_type = st.selectbox("Type of Violation", [
+            "Boat Speeding (>5 knots in protected zone)",
+            "Anchoring in Protected Zone",
+            "Propeller Damage to Seagrass",
+            "Pollution/Dumping",
+            "Fishing in Protected Area",
+            "Other (specify in details)"
+        ])
+        
+        details = st.text_area("Additional Details", 
+                              placeholder="Please provide any additional information, boat registration numbers, or descriptions that may help identify the violator.")
+        
+        photo_upload = st.file_uploader("Upload Photo Evidence (if available)", type=["jpg", "jpeg", "png"])
+        
+        reporter_name = st.text_input("Your Name (optional)")
+        reporter_contact = st.text_input("Your Contact Information (optional)")
+        
+        submit_button = st.form_submit_button("Submit Report")
+    
+    if submit_button:
+        # In a real application, this would save to a database
+        # For this simulation, we'll just show a success message
+        st.success("Thank you for your report! It has been submitted to our conservation team for review.")
+        st.info("In a real application, this data would be sent to a database for conservation officers to review.")
+        
+        # Display summary of the report
+        st.subheader("Report Summary")
+        report_data = {
+            "Date": f"{date_observed} at {time_observed}",
+            "Location": location,
+            "Violation Type": violation_type,
+            "Details": details,
+            "Reporter": reporter_name if reporter_name else "Anonymous"
+        }
+        
+        for key, value in report_data.items():
+            st.write(f"**{key}**: {value}")
+
+if __name__ == '__main__':
+    main()
+"""
+
+# ==============================================
+# GEOFENCING.PY
+# ==============================================
+
+"""
+import streamlit as st
+from geopy.distance import geodesic
+
+# Define protected seagrass zones in the Brixham/Torbay area
+PROTECTED_ZONES = [
+    {
+        "name": "Fishcombe Cove Seagrass",
+        "lat": 50.4025, 
+        "lon": -3.5137,
+        "radius": 300,  # Radius in meters
+        "restricted": True  # This is now a fully restricted zone for our simulation
+    },
+    {
+        "name": "Elberry Cove Seagrass",
+        "lat": 50.4015,
+        "lon": -3.5260,
+        "radius": 400,
+        "restricted": False  # 5 knot limit zone
+    },
+    {
+        "name": "Torre Abbey Sands",
+        "lat": 50.4614,
+        "lon": -3.5348,
+        "radius": 350,
+        "restricted": False
+    },
+    {
+        "name": "Goodrington Sands",
+        "lat": 50.4242,
+        "lon": -3.5587,
+        "radius": 250,
+        "restricted": False
+    },
+    {
+        "name": "Brixham Marine Conservation Zone",
+        "lat": 50.3990,
+        "lon": -3.5090,
+        "radius": 200,
+        "restricted": True  # No entry zone
+    }
+]
+
+def get_protection_zones():
+    """
+    Returns the list of protected seagrass zones.
+    
+    Returns:
+    list: List of zone dictionaries
+    """
+    return PROTECTED_ZONES
+
+def is_in_protected_zone(location):
+    """
+    Check if the given location is within any protected seagrass zone.
+    
+    Parameters:
+    location (tuple): (latitude, longitude)
+    
+    Returns:
+    bool: True if in a protected zone, False otherwise
+    """
+    for zone in PROTECTED_ZONES:
+        zone_center = (zone["lat"], zone["lon"])
+        distance = geodesic(location, zone_center).meters
+        
+        if distance <= zone["radius"]:
+            return True
+    
+    return False
+
+def get_nearest_zone_info(location):
+    """
+    Get information about the nearest protected zone and the distance to it.
+    
+    Parameters:
+    location (tuple): (latitude, longitude)
+    
+    Returns:
+    dict: Information about the nearest zone including distance
+    """
+    nearest_zone = None
+    min_distance = float('inf')
+    
+    for zone in PROTECTED_ZONES:
+        zone_center = (zone["lat"], zone["lon"])
+        distance = geodesic(location, zone_center).kilometers
+        
+        if distance < min_distance:
+            min_distance = distance
+            nearest_zone = zone.copy()
+            nearest_zone["distance"] = distance
+    
+    return nearest_zone
+"""
+
+# ==============================================
+# GPS_SIMULATOR.PY
+# ==============================================
+
+"""
+import random
+import streamlit as st
+import math
+from geopy.distance import geodesic
+
+def get_current_location():
+    """
+    Get the current simulated GPS location.
+    If a location is already in session state, return it.
+    Otherwise, generate a location around Brixham.
+    
+    Returns:
+    tuple: (latitude, longitude)
+    """
+    if 'location' in st.session_state:
+        return st.session_state['location']
+    
+    # Default location (Brixham harbor)
+    center_lat, center_lon = 50.3947, -3.5123
+    
+    # Generate a random position within 1 km of Brixham
+    # Convert km to degrees (very roughly, but good enough for simulation)
+    km_per_degree_lat = 111.0
+    km_per_degree_lon = 111.0 * math.cos(math.radians(center_lat))
+    
+    # Random offset in degrees (up to ~500m in each direction)
+    lat_offset = (random.random() - 0.5) * (1.0 / km_per_degree_lat)
+    lon_offset = (random.random() - 0.5) * (1.0 / km_per_degree_lon)
+    
+    # Return the simulated location
+    return (center_lat + lat_offset, center_lon + lon_offset)
+
+def update_location(current_location, bearing, speed_knots, time_delta_seconds):
+    """
+    Update location based on bearing, speed, and elapsed time.
+    
+    Parameters:
+    current_location (tuple): Current (lat, lon)
+    bearing (float): Direction in degrees (0-360, where 0 is North)
+    speed_knots (float): Speed in knots
+    time_delta_seconds (float): Elapsed time in seconds
+    
+    Returns:
+    tuple: New (lat, lon)
+    """
+    # Convert knots to meters per second
+    speed_m_per_s = speed_knots * 0.514444
+    
+    # Calculate distance traveled in meters
+    distance_m = speed_m_per_s * time_delta_seconds
+    
+    # Convert current location to starting point
+    start_point = current_location
+    
+    # Calculate destination point given distance and bearing
+    # This is a simplified approximation that works for short distances
+    distance_km = distance_m / 1000.0  # Convert to km for geodesic
+    
+    # Get destination using the geodesic distance calculation (accurate for Earth's curvature)
+    from geopy.distance import geodesic
+    destination = geodesic(kilometers=distance_km).destination(start_point, bearing)
+    
+    # Apply some random drift to simulate realistic boat movement
+    new_location = simulate_drift((destination.latitude, destination.longitude))
+    
+    return new_location
+
+def simulate_drift(current_location, max_drift_meters=5):
+    """
+    Simulate random drift of a boat due to currents and wind.
+    
+    Parameters:
+    current_location (tuple): Current (lat, lon)
+    max_drift_meters (float): Maximum drift distance in meters
+    
+    Returns:
+    tuple: New (lat, lon) with drift applied
+    """
+    # Random drift distance (0 to max_drift_meters)
+    drift_distance = random.random() * max_drift_meters
+    
+    # Random drift direction (0 to 360 degrees)
+    drift_direction = random.random() * 360
+    
+    # Convert meters to kilometers for geodesic
+    drift_distance_km = drift_distance / 1000.0
+    
+    # Calculate new position with drift
+    from geopy.distance import geodesic
+    destination = geodesic(kilometers=drift_distance_km).destination(current_location, drift_direction)
+    
+    return (destination.latitude, destination.longitude)
+"""
+
+# ==============================================
+# SIMULATED_NOTIFICATIONS.PY
+# ==============================================
+
+"""
+import streamlit as st
+from datetime import datetime
+import time
+
+def send_notification(phone_number, message):
+    """
+    Simulates sending an SMS notification and adds it to the session state.
+    
+    Parameters:
+    phone_number (str): The recipient's phone number in E.164 format
+    message (str): The message content to be sent
+    """
+    # Format the current time for the notification
+    current_time = datetime.now().strftime("%H:%M:%S")
+    
+    # Create notification object
+    notification = {
+        "phone": phone_number,
+        "message": message,
+        "time": current_time,
+        "timestamp": time.time()
+    }
+    
+    # Handle session state
+    if 'notifications' not in st.session_state:
+        st.session_state['notifications'] = []
+    
+    # Add notification to the beginning of the list (most recent first)
+    st.session_state['notifications'].insert(0, notification)
+    
+    # Debug output (to console)
+    print(f"Notification sent to {phone_number}: {message}")
+    
+    return True
+
+def get_notifications(limit=5):
+    """
+    Retrieves the most recent notifications from the session state.
+    
+    Parameters:
+    limit (int): Maximum number of notifications to return
+    
+    Returns:
+    list: List of notification objects, newest first
+    """
+    if 'notifications' not in st.session_state:
+        st.session_state['notifications'] = []
+        return []
+    
+    # Return notifications (already sorted by most recent)
+    return st.session_state['notifications'][:limit]
+
+def clear_notifications():
+    """Clears all notifications from the session state."""
+    st.session_state['notifications'] = []
+    print("All notifications cleared")
+"""
+
+# ==============================================
+# SEAGRASS_GAME.PY
+# ==============================================
+
+"""
+import streamlit as st
+import random
+from PIL import Image
+import io
+
+def render_seagrass_game():
+    """
+    A simple seagrass-themed guessing game where players need to 
+    identify marine species that depend on seagrass habitats.
+    """
+    st.header("🎮 Seagrass Species Challenge")
+    
+    st.markdown("""
+    Test your knowledge of marine species that depend on seagrass ecosystems!
+    
+    For each species below, decide if it depends on seagrass habitats during its lifecycle.
+    """)
+    
+    # Initialize game state
+    if 'current_question' not in st.session_state:
+        st.session_state['current_question'] = generate_question()
+    if 'game_score' not in st.session_state:
+        st.session_state['game_score'] = 0
+    if 'questions_asked' not in st.session_state:
+        st.session_state['questions_asked'] = 0
+    
+    # Display current species
+    st.subheader(f"Does this species depend on seagrass? 🤔")
+    st.write(f"**{st.session_state['current_question']['species']}**")
+    
+    # Show game stats
+    st.caption(f"Score: {st.session_state['game_score']} / {st.session_state['questions_asked']} • Accuracy: {calculate_accuracy()}%")
+    
+    # Answer buttons
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("👍 Yes, it depends on seagrass", use_container_width=True):
+            check_answer(True)
+    with col2:
+        if st.button("👎 No, it doesn't need seagrass", use_container_width=True):
+            check_answer(False)
+            
+    # High Score
+    st.divider()
+    st.subheader("Seagrass Species Facts")
+    
+    # Display a fun fact about seagrass species
+    fact = get_random_seagrass_fact()
+    st.info(fact)
+    
+    # Reset game button
+    if st.button("Reset Game"):
+        st.session_state['game_score'] = 0
+        st.session_state['questions_asked'] = 0
+        st.session_state['current_question'] = generate_question()
+        st.rerun()
+
+def generate_question():
+    """
+    Generate a random question for the seagrass game.
+    
+    Returns:
+    dict: A question with species name and whether it depends on seagrass
+    """
+    # Species that depend on seagrass
+    seagrass_dependent = [
+        "Green Sea Turtle",
+        "Dugong",
+        "Seahorse",
+        "Bay Scallop",
+        "Manatee",
+        "Queen Conch",
+        "Parrotfish",
+        "Blue Crab",
+        "Spotted Sea Trout",
+        "Pink Shrimp"
+    ]
+    
+    # Species that don't depend on seagrass
+    not_dependent = [
+        "Giant Squid",
+        "Sperm Whale",
+        "Vampire Squid",
+        "Abyssal Anglerfish",
+        "Goblin Shark",
+        "Gulper Eel",
+        "Megamouth Shark",
+        "Giant Isopod",
+        "Viperfish",
+        "Sleeper Shark"
+    ]
+    
+    # Generate a random question
+    if random.random() < 0.5:
+        species = random.choice(seagrass_dependent)
+        depends_on_seagrass = True
+    else:
+        species = random.choice(not_dependent)
+        depends_on_seagrass = False
+    
+    return {
+        "species": species,
+        "depends_on_seagrass": depends_on_seagrass
+    }
+
+def check_answer(user_answer):
+    """
+    Check if the user's answer is correct and update the game state.
+    
+    Parameters:
+    user_answer (bool): True if user chose "Yes", False if "No"
+    """
+    correct_answer = st.session_state['current_question']['depends_on_seagrass']
+    species_name = st.session_state['current_question']['species']
+    
+    # Update questions asked count
+    st.session_state['questions_asked'] += 1
+    
+    # Check if answer is correct
+    if user_answer == correct_answer:
+        st.session_state['game_score'] += 1
+        st.success(f"✅ Correct! {species_name} {'does' if correct_answer else 'does not'} depend on seagrass habitats.")
+    else:
+        st.error(f"❌ Sorry, that's incorrect. {species_name} {'does' if correct_answer else 'does not'} depend on seagrass habitats.")
+    
+    # Generate a new question
+    st.session_state['current_question'] = generate_question()
+    
+def calculate_accuracy():
+    """Calculate the game accuracy percentage."""
+    if st.session_state['questions_asked'] == 0:
+        return 0
+    
+    return round((st.session_state['game_score'] / st.session_state['questions_asked']) * 100)
+
+def get_random_seagrass_fact():
+    """Return a random fact about seagrass ecosystems."""
+    facts = [
+        "Seagrass meadows can capture carbon 35 times faster than tropical rainforests!",
+        "A single acre of seagrass can support over 40,000 fish and 50 million small invertebrates.",
+        "There are about 60 species of seagrass worldwide, found on every continent except Antarctica.",
+        "Seahorses use their tails to anchor themselves to seagrass blades while hunting.",
+        "Seagrass is not actually a seaweed - it's a flowering plant that evolved from land plants!",
+        "Some seagrass meadows are over 10,000 years old, making them among the oldest living organisms on Earth.",
+        "Manatees can eat up to 100 pounds (45 kg) of seagrass per day!",
+        "Seagrass stabilizes sea bottom sediments, helping to prevent coastal erosion during storms.",
+        "Green sea turtles are sometimes called 'the lawnmowers of the sea' because they graze on seagrass.",
+        "One square meter of seagrass can release over 10 liters of oxygen into the water each day."
+    ]
+    return random.choice(facts)
+"""
+
+# ==============================================
+# UTILS.PY
+# ==============================================
+
+"""
+import phonenumbers
+import os
+
+def validate_phone_number(phone_number):
+    """
+    Validates and formats a phone number to E.164 format.
+    
+    Parameters:
+    phone_number (str): Phone number to validate
+    
+    Returns:
+    tuple: (valid, formatted_number) where valid is a boolean and
+           formatted_number is the E.164 formatted number or None if invalid
+    """
+    # Remove any extra whitespace
+    phone_number = phone_number.strip()
+    
+    # If the phone number doesn't start with a '+', add it
+    if not phone_number.startswith('+'):
+        # Default to UK if no country code is provided
+        phone_number = '+44' + phone_number.lstrip('0')
+    
+    try:
+        # Parse the phone number
+        parsed_number = phonenumbers.parse(phone_number)
+        
+        # Check if the number is valid
+        if phonenumbers.is_valid_number(parsed_number):
+            # Format to E.164 format (e.g., +447123456789)
+            formatted_number = phonenumbers.format_number(
+                parsed_number, 
+                phonenumbers.PhoneNumberFormat.E164
+            )
+            return True, formatted_number
+        else:
+            return False, None
+    except Exception as e:
+        print(f"Phone validation error: {e}")
+        return False, None
+
+def get_svg_content(filepath):
+    """
+    Loads and returns SVG content from a file.
+    If file doesn't exist, returns a fallback SVG.
+    
+    Parameters:
+    filepath (str): Path to the SVG file
+    
+    Returns:
+    str: SVG content
+    """
+    fallback_svg = '''
+    <svg width="400" height="100" xmlns="http://www.w3.org/2000/svg">
+        <rect width="400" height="100" fill="#E6F7E9" />
+        <text x="50%" y="50%" font-family="Arial" font-size="20" fill="#2E8B57" 
+              text-anchor="middle" dominant-baseline="middle">
+            Sentinel Seagrass Protector
+        </text>
+    </svg>
+    '''
+    
+    try:
+        if os.path.exists(filepath):
+            with open(filepath, 'r') as file:
+                return file.read()
+        else:
+            return fallback_svg
+    except Exception as e:
+        print(f"Error loading SVG from {filepath}: {e}")
+        return fallback_svg
+"""
+
+# ==============================================
+# .STREAMLIT/CONFIG.TOML
+# ==============================================
+
+"""
+[server]
+headless = true
+address = "0.0.0.0"
+port = 5000
+"""
+
+# ==============================================
+# MANIFEST.JSON
+# ==============================================
+
+"""
+{
+  "name": "Sentinel Seagrass Protector",
+  "short_name": "Seagrass Sentinel",
+  "description": "Protecting seagrass ecosystems through geofencing and boater alerts",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#E6F7E9",
+  "theme_color": "#2E8B57",
+  "icons": [
+    {
+      "src": "assets/seagrass_icon.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}
+"""
+
+# ==============================================
+# SERVICE-WORKER.JS
+# ==============================================
+
+"""
+// Base service worker for PWA functionality
+
+const CACHE_NAME = 'seagrass-protector-v1';
+const urlsToCache = [
+  '/',
+  '/app.py',
+  '/assets/seagrass_icon.svg',
+  '/assets/seagrass_header.svg',
+  '/assets/seagrass_footer.svg'
+];
+
+self.addEventListener('install', function(event) {
+  // Perform install steps
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then(function(cache) {
+        console.log('Opened cache');
+        return cache.addAll(urlsToCache);
+      })
+  );
+});
+
+self.addEventListener('fetch', function(event) {
+  event.respondWith(
+    caches.match(event.request)
+      .then(function(response) {
+        // Cache hit - return response
+        if (response) {
+          return response;
+        }
+        return fetch(event.request);
+      }
+    )
+  );
+});
+
+self.addEventListener('activate', function(event) {
+  var cacheWhitelist = [CACHE_NAME];
+  event.waitUntil(
+    caches.keys().then(function(cacheNames) {
+      return Promise.all(
+        cacheNames.map(function(cacheName) {
+          if (cacheWhitelist.indexOf(cacheName) === -1) {
+            return caches.delete(cacheName);
+          }
+        })
+      );
+    })
+  );
+});
+"""
+
+# ==============================================
+# INSTALLATION INSTRUCTIONS
+# ==============================================
+
+"""
+# SENTINEL SEAGRASS PROTECTOR - INSTALLATION INSTRUCTIONS
+
+To run this application locally or deploy it to another service, follow these steps:
+
+## Required Dependencies
+
+Install the following Python packages:
+```
+pip install streamlit folium streamlit-folium geopy phonenumbers pillow pandas
+```
+
+## File Structure Setup
+
+1. Create the following files in your project directory:
+   - app.py
+   - geofencing.py
+   - gps_simulator.py
+   - seagrass_game.py
+   - simulated_notifications.py
+   - utils.py
+
+2. Create a `.streamlit` directory and add the `config.toml` file inside it.
+
+3. Create an `assets` directory (optional, for SVG files).
+
+4. Add `manifest.json` and `service-worker.js` to the root directory for PWA functionality.
+
+## Running the Application
+
+Run the application with:
+```
+streamlit run app.py
+```
+
+## Alternative Deployment Options
+
+### Streamlit Cloud (Free)
+1. Create a GitHub repository with these files
+2. Visit streamlit.io and create a free account
+3. Connect your GitHub repository
+4. Deploy the app
+
+### Heroku (Free tier available)
+1. Create a `requirements.txt` file listing all dependencies
+2. Create a `Procfile` with: `web: streamlit run app.py --server.port $PORT`
+3. Follow Heroku deployment instructions
+
+### Railway, Render, or other PaaS
+These services offer similar free tiers and deployment processes.
+
+# FOR MORE HELP
+If you encounter any issues, refer to the Streamlit documentation at streamlit.io/docs
+"""
+
+print("Code download script created. You can now download this file to access all your code.")
